@@ -1,38 +1,47 @@
+'use strict'
 
-/**
- * Expose compositor.
- */
+const co = require('co')
+const isGeneratorFn = require('is-generator-fn')
 
-module.exports = compose;
+function compose (middleware) {
+  return function (ctx) {
+    return Promise.resolve().then(function () {
+      let index = -1
 
-/**
- * Compose `middleware` returning
- * a fully valid middleware comprised
- * of all those which are passed.
- *
- * @param {Array} middleware
- * @return {Function}
- * @api public
- */
+      return dispatch(0)
 
-function compose(middleware){
-  return function *(next){
-    if (!next) next = noop();
+      function dispatch (i) {
+        if (i <= index) {
+          throw new Error('next() called multiple times')
+        }
 
-    var i = middleware.length;
+        index = i
 
-    while (i--) {
-      next = middleware[i].call(this, next);
-    }
+        let fn = middleware[i]
+        let ret
 
-    return yield *next;
+        if (typeof fn === 'function') {
+          if (isGeneratorFn(fn)) {
+            fn = co.wrap(fn)
+
+            const next = function * () {
+              return yield dispatch(i + 1)
+            }
+
+            next[Symbol.iterator] = function () {
+              return next()
+            }
+
+            ret = fn.call(ctx, next)
+          } else {
+            ret = fn.call(ctx, function () { return dispatch(i + 1) })
+          }
+        }
+
+        return Promise.resolve(ret)
+      }
+    })
   }
 }
 
-/**
- * Noop.
- *
- * @api private
- */
-
-function *noop(){}
+module.exports = compose
